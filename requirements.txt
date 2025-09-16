@@ -1,4 +1,11 @@
-sentence-transformers
-qdrant-client
+accelerate
 datasets
-requests
+fastapi
+httpx
+huggingface-hub
+numpy
+proton
+tqdm
+torch
+transformers
+uvicorn
