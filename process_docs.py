@@ -5,6 +5,7 @@
 # - Remove Jira tickets
 # - Drop glossary/field-spec style stubs
 # - Deduplicate near-identical docs
+# - Drop any document that mentions HAWK
 # - Chunk by headings
 # - Emit JSONL with metadata
 # - Optionally move/delete dropped files (trash dir or hard delete)
@@ -33,6 +34,7 @@ CODE_FENCE_RE = re.compile(r"^```")
 LINK_RE = re.compile(r"\[(.*?)\]\((.*?)\)")
 HTML_TAG_RE = re.compile(r"<[^>]+>")
 WHITESPACE_RE = re.compile(r"\s+")
+HAWK_RE = re.compile(r"\bhawk\b", re.IGNORECASE)
 
 TOC_HINTS = {"table of contents", "toc", "index"}
 
@@ -40,7 +42,6 @@ TOC_HINTS = {"table of contents", "toc", "index"}
 # ---------- Utils ----------
 
 def approx_token_count(text: str) -> int:
-    # Simple word-ish estimate
     return len(text.split())
 
 
@@ -56,10 +57,9 @@ def strip_markdown(text: str) -> str:
 
 
 def normalize_for_hash(text: str) -> str:
-    # Normalize aggressively for dedup: lowercase, strip punctuation/whitespace
     t = text.lower()
     t = HTML_TAG_RE.sub(" ", t)
-    t = re.sub(r"[^\w]+", "", t)  # keep letters/digits/underscore
+    t = re.sub(r"[^\w]+", "", t)
     return t
 
 
@@ -90,7 +90,7 @@ def has_code_block(lines: List[str]) -> bool:
     for ln in lines:
         if CODE_FENCE_RE.match(ln.strip()):
             fence_count += 1
-            if fence_count >= 2:  # opening + closing
+            if fence_count >= 2:
                 return True
     return False
 
@@ -112,7 +112,6 @@ def is_jira_ticket(text: str, jira_host: str = None) -> bool:
         score += 1
     if "atlassian.net/browse/" in text.lower():
         score += 1
-    # Look for common field labels near the top
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     field_hits = 0
     for ln in lines[:80]:
@@ -126,17 +125,12 @@ def is_jira_ticket(text: str, jira_host: str = None) -> bool:
             break
     if field_hits >= 2:
         score += 1
-    # Old Jira wiki markup like "h3. Summary"
     if re.search(r"\bh\d\.\s", text):
         score += 1
-    return score >= 2  # require at least two signals
+    return score >= 2
 
 
 def chunk_by_headings(lines: List[str], max_chars: int = 2500) -> List[Tuple[str, str]]:
-    """
-    Returns list of (section_title, section_text).
-    Uses headings as hard boundaries; also splits oversized sections.
-    """
     sections: List[Tuple[str, str]] = []
     cur_title = None
     cur_buf: List[str] = []
@@ -169,7 +163,7 @@ def chunk_by_headings(lines: List[str], max_chars: int = 2500) -> List[Tuple[str
         if m:
             flush()
             cur_title = m.group(2).strip()
-            cur_buf.append(ln)  # keep the heading in the section for context
+            cur_buf.append(ln)
         else:
             cur_buf.append(ln)
     flush()
@@ -207,7 +201,6 @@ def count_headings(text: str) -> int:
 
 
 def _kv_line(ln: str) -> bool:
-    # key: value with relatively short key
     return bool(re.match(r"^[A-Za-z][\w\s/()-]{0,40}:\s+\S", ln))
 
 
@@ -215,12 +208,10 @@ def is_glossary_stub(text: str, title: str, max_words: int, deny_title_re: str) 
     stripped = strip_markdown(text)
     if approx_token_count(stripped) > max_words:
         return False
-
     hcount = count_headings(text)
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     colon_lines = sum(1 for ln in lines if _kv_line(ln))
     ratio = colon_lines / max(1, len(lines))
-
     signals = 0
     if hcount <= 2:
         signals += 1
@@ -234,7 +225,6 @@ def is_glossary_stub(text: str, title: str, max_words: int, deny_title_re: str) 
     first_para = re.split(r"\n\s*\n", stripped, maxsplit=1)[0]
     if approx_token_count(first_para) <= 35:
         signals += 1
-
     return signals >= 3
 
 
@@ -252,7 +242,6 @@ def drop_file(fp: Path, rel_path: str, args):
             fp.unlink()
         except Exception:
             pass
-    # else: leave file in place
 
 
 # ---------- Main ----------
@@ -276,11 +265,11 @@ def main():
                     help="Max words to still treat as a glossary stub")
     ap.add_argument("--deny-title-regex", type=str,
                     default=r"^\{?[A-Z0-9_]{3,}\}?$",
-                    help="Regex for field-like titles to drop (e.g., {CATALOG_TYPE})")
+                    help="Regex for field-like titles to drop")
     ap.add_argument("--trash-dir", type=str, default=None,
-                    help="Move dropped files here (safe & reversible)")
+                    help="Move dropped files here")
     ap.add_argument("--hard-delete", action="store_true",
-                    help="Permanently delete dropped files (careful)")
+                    help="Permanently delete dropped files")
     ap.add_argument("--dry-run", action="store_true",
                     help="Analyze only; do not write output or move/delete files")
     args = ap.parse_args()
@@ -291,7 +280,6 @@ def main():
         sys.exit(1)
 
     must_keep_keywords = [s.strip() for s in args.must_keep.split(",") if s.strip()]
-
     files = list(collect_files(root))
     if not files:
         print("No Markdown/HTML files found.")
@@ -307,6 +295,7 @@ def main():
         "dropped_toc": 0,
         "dropped_glossary_stub": 0,
         "dropped_duplicate": 0,
+        "dropped_hawk": 0,
         "empty_or_unreadable": 0,
     }
 
@@ -325,16 +314,13 @@ def main():
 
         title = guess_title(raw, fallback=fp.name)
 
-        # Quick thin/TOC page detection
         if is_probably_toc(raw):
             stats["dropped_toc"] += 1
             drop_file(fp, rel_path, args)
             continue
 
-        # Short-page logic with rescue conditions
         drop_for_short = should_drop_short(raw, args.min_words, args.min_chars)
         lines = raw.splitlines()
-
         rescued = False
         if drop_for_short and args.keep_short_if_code and has_code_block(lines):
             rescued = True
@@ -345,7 +331,12 @@ def main():
             drop_file(fp, rel_path, args)
             continue
 
-        # Glossary/field-spec stub detection
+        # HAWK detection
+        if HAWK_RE.search(raw):
+            stats["dropped_hawk"] += 1
+            drop_file(fp, rel_path, args)
+            continue
+
         if args.drop_glossary_stubs and is_glossary_stub(
             raw, title, args.glossary_max_words, args.deny_title_regex
         ):
@@ -353,13 +344,11 @@ def main():
             drop_file(fp, rel_path, args)
             continue
 
-        # Jira detection
         if args.drop_jira and is_jira_ticket(raw, jira_host=args.jira_host):
             stats["dropped_jira"] += 1
             drop_file(fp, rel_path, args)
             continue
 
-        # Dedup (document-level)
         normalized = normalize_for_hash(raw)
         h = sha1_hash(normalized)
         if h in seen_hashes:
@@ -368,7 +357,6 @@ def main():
             continue
         seen_hashes.add(h)
 
-        # Chunk and emit JSONL
         sections = chunk_by_headings(lines, max_chars=args.max_chunk_chars)
         doc_id = h[:16]
         aka_title = title or Path(rel_path).stem
@@ -377,7 +365,7 @@ def main():
         for idx, (sec_title, sec_text) in enumerate(sections):
             stripped = strip_markdown(sec_text)
             if approx_token_count(stripped) == 0 or len(stripped) < 10:
-                continue  # skip empty-ish chunks
+                continue
             rec = {
                 "doc_id": doc_id,
                 "section_id": idx,
@@ -398,14 +386,12 @@ def main():
             stats["kept_docs"] += 1
             stats["emitted_chunks"] += emitted_here
         else:
-            # Nothing worth emitting; treat as short/empty content
             stats["dropped_short"] += 1
             drop_file(fp, rel_path, args)
 
     if out_f:
         out_f.close()
 
-    # Report
     print("\n=== Clean Notion Export Report ===")
     print(f"Scanned files         : {stats['total_files']}")
     print(f"Kept documents        : {stats['kept_docs']}")
@@ -415,7 +401,9 @@ def main():
     print(f"Dropped (Jira)        : {stats['dropped_jira']}")
     print(f"Dropped (TOC/index)   : {stats['dropped_toc']}")
     print(f"Dropped (duplicates)  : {stats['dropped_duplicate']}")
+    print(f"Dropped (HAWK)        : {stats['dropped_hawk']}")
     print(f"Dropped (empty/unread): {stats['empty_or_unreadable']}")
+
     if not args.dry_run:
         print(f"\nOutput JSONL: {out_path}")
     else:
@@ -424,3 +412,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+###(venv) velizardanev@velizardanev:~/Documents/repos/KolegAI$ python3 process_docs.py   --input ./Notion-Export   --output ./cleaned.jsonl   --drop-jira   --drop-glossary-stubs

@@ -24,3 +24,4 @@ for p in export.rglob("*"):
                 shutil.move(str(p), str(dest))
             else:
                 p.unlink()
+ ### python3 prune_by_jsonl.py ./Notion-Export ./cleaned.jsonl

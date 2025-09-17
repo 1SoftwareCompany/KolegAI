@@ -15,17 +15,12 @@ import os
 import sys
 import csv
 import re
-import qdrant_client
-from pydantic import BaseModel
 from typing import List
-import uvicorn
+
 import requests
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import VectorParams, Distance
-from fastapi import FastAPI
-from fastapi.responses import JSONResponse
-
 
 # ======================
 # Config
@@ -47,8 +42,8 @@ EMBED_DEVICE = "cuda:1"
 RERANK_DEVICE = "cuda:1"
 
 # Retrieval sizes (higher initial recall → better extractions)
-TOP_K_INITIAL = 250
-TOP_K_FINAL = 20
+TOP_K_INITIAL = 150
+TOP_K_FINAL = 12
 
 # ======================
 # Clients & Models
@@ -126,7 +121,7 @@ def llm_call(messages: list, temperature: float = 0.1, json_only: bool = False) 
     body = {
         "model": MODEL_NAME,
         "messages": messages,
-        "max_tokens": 4068,
+        "max_tokens": 2048,
         "temperature": temperature,
         "seed": 42,
     }
@@ -224,7 +219,7 @@ def ask(query: str, want_json: bool = False) -> str:
     }
 
     # If the user asks for a format, we append the schema hint to enforce precise keys.
-    user_text = f"Context:\n{context}\n\nQuestion: {query}\n\nList all matching items."
+    user_text = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer concisely."
     if want_json:
         user_text += "\n\n" + EXTRACTION_SCHEMA_HINT
 
@@ -235,24 +230,23 @@ def ask(query: str, want_json: bool = False) -> str:
     return answer
 
 
-# ======================
-# API
-# ======================
-app = FastAPI(title="RAG API")
+def serve():
+    """Chat loop; does NOT touch Notion files or bulk embeddings."""
+    if not collection_ready(COLLECTION):
+        print("❌ No index found. Run:  python app.py index")
+        sys.exit(1)
 
-class QueryRequest(BaseModel):
-    question: str
-
-class QueryResponse(BaseModel):
-    answer: str
-
-@app.post("/ask")
-def ask_api(req: QueryRequest):
-    return JSONResponse(content={"answer": ask(req.question)})
-
-@app.get("/health")
-def health():
-    return {"status": "ok"}
+    print("\n--- CHAT MODE ---\nType 'exit' to quit.\n")
+    while True:
+        try:
+            q = input("You: ")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+        if q.lower() in {"exit", "quit", "q"}:
+            break
+        want_json = ("format" in q.lower()) or ("{" in q and "}" in q)
+        print("Angel:", ask(q, want_json=want_json), "\n")
 
 
 # ======================
@@ -265,10 +259,9 @@ if __name__ == "__main__":
     parser.add_argument("--mode", choices=["index", "serve"], default="serve")
     parser.add_argument("--force", action="store_true", help="Rebuild index even if it exists")
     parser.add_argument("--batch", type=int, default=256, help="Embedding batch size during indexing")
-    parser.add_argument("--port", type=int, default=8000)
     args = parser.parse_args()
 
     if args.mode == "index":
         index_collection(force=args.force, batch_size=args.batch)
     elif args.mode == "serve":
-         uvicorn.run(app, host="0.0.0.0", port=args.port, reload=False)
+        serve()
