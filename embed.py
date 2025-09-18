@@ -280,13 +280,13 @@ def health():
 @app.post("/index/features", response_model=JSONResponse)
 def index(req: IndexRequest):
     enreached_features = enrich_features(req.features, req.organization)
-    index_collection(req.organization.lower(), enreached_features)
+    index_collection(req.organization.lower()+ "_features", enreached_features)
     return {"status": "ok"}
 
 
 @app.get("/ask/{organization}/feature", response_model=JSONResponse)
 def ask_api(organization: str, req: QueryRequest):
-    return JSONResponse(content={"answer": ask(req.question, organization.lower())})
+    return JSONResponse(content={"answer": ask(req.question, organization.lower() + "_features")})
 
 
 # ======================
