@@ -103,26 +103,6 @@ def load_notion_export(base_dir: str = NOTION_EXPORT_DIR):
     return docs
 
 
-def prepare_feature_import(features: list[dict]):
-    docs = []
-    for i, feat in enumerate(features):
-        text = f"{feat['name']}. {feat['description']}"
-        
-        for idx, ch in enumerate(chunk_text(text)):
-            docs.append({
-                "id": f"feature_{i}_{idx}",
-                "text": ch, 
-                "metadata": {
-                    "source": "feature",
-                    "feature_id": i,
-                    "chunk_id": idx,
-                    "name": feat["name"],
-                    "description": feat["description"]
-                }
-            })
-    return docs
-
-
 def collection_ready(name: str) -> bool:
     """Return True if collection exists and has points."""
     try:
@@ -199,6 +179,16 @@ def index_collection(collection_name: str, docs: List, force: bool = False, batc
     print("✅ Indexed Notion documents into Qdrant")
 
 
+def enrich_features(features: List, organization: str):
+    feature_list = []
+    feature_prompt = "You are a helpful assistant whos job is to find the most detailed information about concrete features and nothing else. The information you need to retrieve is: very detailed information about the feature AND a collection of tags which you think are keywords related to the feature. You need to search throughly in the documentation and return all of the possible information about the feature: {feature} with details: {details}. Do not invent information or return anything else other than the information about this concrete feature. If you don't find anything relevant in the docs, just return empty string. The format in which I want the information returned is plain text."
+    for i, (feature) in enumerate(features):
+        concrete_prompt = feature_prompt.format(feature["name"], feature["description"])
+        gelio_says = ask(concrete_prompt, organization)
+        feature_list.append({"text": gelio_says})
+    
+    return feature_list
+    
 # ======================
 # Query / Serve
 # ======================
@@ -289,14 +279,14 @@ def health():
 
 @app.post("/index/features", response_model=JSONResponse)
 def index(req: IndexRequest):
-    normalized_docs = prepare_feature_import(req.features)
-    index_collection(req.organization.lower(), normalized_docs)
+    enreached_features = enrich_features(req.features, req.organization)
+    index_collection(req.organization.lower(), enreached_features)
     return {"status": "ok"}
 
 
 @app.get("/ask/{organization}/feature", response_model=JSONResponse)
 def ask_api(organization: str, req: QueryRequest):
-    return JSONResponse(content={"answer": ask(req.question, organization)})
+    return JSONResponse(content={"answer": ask(req.question, organization.lower())})
 
 
 # ======================
