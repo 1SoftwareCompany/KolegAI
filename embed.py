@@ -103,6 +103,26 @@ def load_notion_export(base_dir: str = NOTION_EXPORT_DIR):
     return docs
 
 
+def prepare_feature_import(features: list[dict]):
+    docs = []
+    for i, feat in enumerate(features):
+        text = f"{feat['name']}. {feat['description']}"
+        
+        for idx, ch in enumerate(chunk_text(text)):
+            docs.append({
+                "id": f"feature_{i}_{idx}",
+                "text": ch, 
+                "metadata": {
+                    "source": "feature",
+                    "feature_id": i,
+                    "chunk_id": idx,
+                    "name": feat["name"],
+                    "description": feat["description"]
+                }
+            })
+    return docs
+
+
 def collection_ready(name: str) -> bool:
     """Return True if collection exists and has points."""
     try:
@@ -143,13 +163,12 @@ def llm_call(messages: list, temperature: float = 0.1, json_only: bool = False) 
 # ======================
 # Indexing
 # ======================
-def index_collection(force: bool = False, batch_size: int = 256):
+def index_collection(collection_name: str, docs: List, force: bool = False, batch_size: int = 256):
     """Build or rebuild the Qdrant collection."""
-    if collection_ready(COLLECTION) and not force:
+    if collection_ready(collection_name) and not force:
         print("ℹ️ Collection exists, skipping indexing.")
         return
 
-    docs = load_notion_export()
     print(f"Loaded {len(docs)} chunks from Notion export")
 
     embeddings = embedder.encode(
@@ -161,7 +180,7 @@ def index_collection(force: bool = False, batch_size: int = 256):
 
     # Recreate guarantees correct vector size
     client.recreate_collection(
-        collection_name=COLLECTION,
+        collection_name=collection_name,
         vectors_config=VectorParams(size=embeddings.shape[1], distance=Distance.COSINE),
     )
 
@@ -174,7 +193,7 @@ def index_collection(force: bool = False, batch_size: int = 256):
     BATCH_SIZE = 1000
     for start in range(0, len(points), BATCH_SIZE):
         batch = points[start:start + BATCH_SIZE]
-        client.upsert(collection_name=COLLECTION, points=batch)
+        client.upsert(collection_name=collection_name, points=batch)
         print(f"Inserted {start + len(batch)}/{len(points)} chunks")
 
     print("✅ Indexed Notion documents into Qdrant")
@@ -194,12 +213,12 @@ EXTRACTION_SCHEMA_HINT = (
     'Do not invent content. Do not add extra keys, text, code fences, or comments.'
 )
 
-def ask(query: str, want_json: bool = False) -> str:
+def ask(query: str, collection_name: str, want_json: bool = False) -> str:
     """Dense retrieve → rerank → answer with LLM."""
     # Encode query on GPU 1
     q_emb = embedder.encode([query], normalize_embeddings=True)[0]
     initial = client.query_points(
-        collection_name=COLLECTION,
+        collection_name=collection_name,
         query=q_emb.tolist(),
         limit=TOP_K_INITIAL
     ).points
@@ -243,16 +262,41 @@ app = FastAPI(title="RAG API")
 class QueryRequest(BaseModel):
     question: str
 
+
 class QueryResponse(BaseModel):
     answer: str
 
-@app.post("/ask")
+
+class Feature(BaseModel):
+    name: str
+    description: str
+
+
+class IndexRequest(BaseModel):
+    organization: str
+    features: List[Feature]
+
+
+@app.post("/ask", response_model=JSONResponse)
 def ask_api(req: QueryRequest):
-    return JSONResponse(content={"answer": ask(req.question)})
+    return JSONResponse(content={"answer": ask(req.question, COLLECTION)})
+
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@app.post("/index/features", response_model=JSONResponse)
+def index(req: IndexRequest):
+    normalized_docs = prepare_feature_import(req.features)
+    index_collection(req.organization.lower(), normalized_docs)
+    return {"status": "ok"}
+
+
+@app.get("/ask/{organization}/feature", response_model=JSONResponse)
+def ask_api(organization: str, req: QueryRequest):
+    return JSONResponse(content={"answer": ask(req.question, organization)})
 
 
 # ======================
@@ -269,6 +313,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.mode == "index":
-        index_collection(force=args.force, batch_size=args.batch)
+        docs = load_notion_export()
+        index_collection(COLLECTION, docs, force=args.force, batch_size=args.batch)
     elif args.mode == "serve":
          uvicorn.run(app, host="0.0.0.0", port=args.port, reload=False)
