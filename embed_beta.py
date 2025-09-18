@@ -291,7 +291,8 @@ def ask(query: str, want_json: bool = False) -> str:
             "Return only top-level microservices/services/APIs. Ignore Jira issues, tickets, error-code lists, "
             "endpoint enumerations, or sub-features. If a page lists sub-components, include only the parent microservice.\n"
             "When structured output is requested, you MUST return valid JSON that follows the requested schema.\n"
-            "If required fields are not present, leave them empty. Do NOT invent facts."
+            "If required fields are not present, leave them empty. Do NOT invent facts.\n"
+            "If prompted about features refer to the names of Services and APIs in the infrastructure documentation" 
         ),
     }
 
