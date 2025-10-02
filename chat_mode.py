@@ -25,7 +25,7 @@ from qdrant_client.http.models import VectorParams, Distance
 # ======================
 # Config
 # ======================
-COLLECTION = "notion_docs"
+COLLECTION = "notion_docs_unicom"
 NOTION_EXPORT_DIR = "Notion-Export"
 
 # Qdrant (HTTP default). If you use gRPC, set prefer_grpc=True below.
@@ -36,14 +36,15 @@ LLM_API = "http://localhost:5000/v1/chat/completions"
 MODEL_NAME = "qwen2.5-14b-instruct"  # adjust to whatever your server expects
 
 # Embeddings / Reranker on GPU 1
-EMBED_MODEL = "intfloat/multilingual-e5-large"
-RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+EMBED_MODEL = "BAAI/bge-m3"
+RERANK_MODEL = "BAAI/bge-reranker-large"
 EMBED_DEVICE = "cuda:1"
 RERANK_DEVICE = "cuda:1"
 
+
 # Retrieval sizes (higher initial recall → better extractions)
-TOP_K_INITIAL = 150
-TOP_K_FINAL = 12
+TOP_K_INITIAL = 500
+TOP_K_FINAL = 30
 
 # ======================
 # Clients & Models
@@ -178,16 +179,7 @@ def index_collection(force: bool = False, batch_size: int = 256):
 # ======================
 # Query / Serve
 # ======================
-EXTRACTION_SCHEMA_HINT = (
-    # NOTE: keep EXACT keys, including your requested 'feature_decription' spelling.
-    'Return ONLY a JSON object of the form: '
-    '{"organization_name":"", "organization_description":"", '
-    '"main_features":[{"feature_name":"", "feature_decription":""}]}. '
-    'Use only information present in the context. '
-    'If any field is missing in the context, set it to an empty string (""), '
-    'and if no features are found, use an empty array []. '
-    'Do not invent content. Do not add extra keys, text, code fences, or comments.'
-)
+
 
 def ask(query: str, want_json: bool = False) -> str:
     """Dense retrieve → rerank → answer with LLM."""
@@ -220,8 +212,6 @@ def ask(query: str, want_json: bool = False) -> str:
 
     # If the user asks for a format, we append the schema hint to enforce precise keys.
     user_text = f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer concisely."
-    if want_json:
-        user_text += "\n\n" + EXTRACTION_SCHEMA_HINT
 
     user = {"role": "user", "content": user_text}
 

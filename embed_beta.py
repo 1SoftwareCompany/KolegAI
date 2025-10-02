@@ -38,8 +38,9 @@ from fastapi.responses import JSONResponse
 # ======================
 # Config
 # ======================
-COLLECTION = "notion_docs"
+COLLECTION = "notion_docs_unicom"
 NOTION_EXPORT_DIR = "Notion-Export"
+
 
 # Qdrant (HTTP default). If you use gRPC, set prefer_grpc=True below.
 QDRANT_URL = "http://localhost:6333"
@@ -49,16 +50,16 @@ LLM_API = "http://localhost:5000/v1/chat/completions"
 MODEL_NAME = "qwen2.5-14b-instruct"  # adjust to whatever your server expects
 
 # Embeddings / Reranker on GPU 1
-EMBED_MODEL = "intfloat/multilingual-e5-large"
+EMBED_MODEL = "BAAI/bge-m3"
 # Tip (optional upgrade): RERANK_MODEL = "BAAI/bge-reranker-v2-m3" for stronger precision
-RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+RERANK_MODEL = "BAAI/bge-reranker-large"
 EMBED_DEVICE = os.getenv("EMBED_DEVICE", "cuda:1")
 RERANK_DEVICE = os.getenv("RERANK_DEVICE", "cuda:1")
 
 # Retrieval sizes (higher initial recall → better extractions)
 # Forward-looking default: small, clean final context
-TOP_K_INITIAL = int(os.getenv("TOP_K_INITIAL", "150"))
-TOP_K_FINAL = int(os.getenv("TOP_K_FINAL", "10"))
+TOP_K_INITIAL = int(os.getenv("TOP_K_INITIAL", "250"))
+TOP_K_FINAL = int(os.getenv("TOP_K_FINAL", "20"))
 
 # Behavior toggles
 ENABLE_NOISE_FILTER = os.getenv("ENABLE_NOISE_FILTER", "1") == "1"
@@ -98,24 +99,48 @@ def chunk_text(t: str, max_chars: int = 2000, overlap: int = 120) -> List[str]:
 
 
 def load_notion_export(base_dir: str = NOTION_EXPORT_DIR, include_csv: bool = False):
-    """Load .md and (optionally) .csv from Notion export and chunk them."""
+    """Recursively load .md and (optionally) .csv from Notion export and chunk them.
+
+    - Walks *all subfolders* under `base_dir`
+    - Stores `path` as a POSIX-style relative path (for nicer grouping)
+    - CSV rows get a virtual path suffix `#row{n}`
+    """
     docs = []
-    for fname in os.listdir(base_dir):
-        fpath = os.path.join(base_dir, fname)
+    base_dir = os.path.abspath(base_dir)
 
-        if fname.endswith(".md"):
-            with open(fpath, "r", encoding="utf-8") as f:
-                text = f.read()
-            for idx, ch in enumerate(chunk_text(text)):
-                docs.append({"path": fname, "chunk_id": idx, "text": ch})
+    for root, _dirs, files in os.walk(base_dir):
+        for fname in files:
+            lower = fname.lower()
+            fpath = os.path.join(root, fname)
+            relpath = os.path.relpath(fpath, base_dir).replace(os.sep, "/")
 
-        elif include_csv and fname.endswith(".csv"):
-            with open(fpath, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row_i, row in enumerate(reader):
-                    text = " | ".join([f"{k}: {v}" for k, v in row.items()])
-                    for idx, ch in enumerate(chunk_text(text)):
-                        docs.append({"path": f"{fname}#row{row_i}", "chunk_id": idx, "text": ch})
+            if lower.endswith(".md"):
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        text = f.read()
+                except Exception:
+                    continue
+                for idx, ch in enumerate(chunk_text(text)):
+                    docs.append({"path": relpath, "chunk_id": idx, "text": ch})
+
+            elif include_csv and lower.endswith(".csv"):
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        reader = csv.DictReader(f)
+                        # If CSV has no header, DictReader.fieldnames may be None; skip such files gracefully
+                        if not reader.fieldnames:
+                            continue
+                        for row_i, row in enumerate(reader):
+                            try:
+                                text = " | ".join([f"{k}: {v}" for k, v in row.items()])
+                            except Exception:
+                                # Fallback stringification
+                                text = str(row)
+                            for idx, ch in enumerate(chunk_text(text)):
+                                docs.append({"path": f"{relpath}#row{row_i}", "chunk_id": idx, "text": ch})
+                except Exception:
+                    continue
+
     return docs
 
 

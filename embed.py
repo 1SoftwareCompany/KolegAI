@@ -25,13 +25,14 @@ from qdrant_client import QdrantClient
 from qdrant_client.http.models import VectorParams, Distance
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 
 # ======================
 # Config
 # ======================
 COLLECTION = "notion_docs"
-NOTION_EXPORT_DIR = "Notion-Export"
+NOTION_EXPORT_DIR = "Notion-Export-Unicom-Only"
 
 # Qdrant (HTTP default). If you use gRPC, set prefer_grpc=True below.
 QDRANT_URL = "http://localhost:6333"
@@ -81,25 +82,49 @@ def chunk_text(t: str, max_chars: int = 2000, overlap: int = 120) -> List[str]:
     return chunks
 
 
-def load_notion_export(base_dir: str = NOTION_EXPORT_DIR):
-    """Load .md and .csv from Notion export and chunk them."""
+def load_notion_export(base_dir: str = NOTION_EXPORT_DIR, include_csv: bool = False):
+    """Recursively load .md and (optionally) .csv from Notion export and chunk them.
+
+    - Walks *all subfolders* under `base_dir`
+    - Stores `path` as a POSIX-style relative path (for nicer grouping)
+    - CSV rows get a virtual path suffix `#row{n}`
+    """
     docs = []
-    for fname in os.listdir(base_dir):
-        fpath = os.path.join(base_dir, fname)
+    base_dir = os.path.abspath(base_dir)
 
-        if fname.endswith(".md"):
-            with open(fpath, "r", encoding="utf-8") as f:
-                text = f.read()
-            for idx, ch in enumerate(chunk_text(text)):
-                docs.append({"path": fname, "chunk_id": idx, "text": ch})
+    for root, _dirs, files in os.walk(base_dir):
+        for fname in files:
+            lower = fname.lower()
+            fpath = os.path.join(root, fname)
+            relpath = os.path.relpath(fpath, base_dir).replace(os.sep, "/")
 
-        elif fname.endswith(".csv"):
-            with open(fpath, "r", encoding="utf-8") as f:
-                reader = csv.DictReader(f)
-                for row_i, row in enumerate(reader):
-                    text = " | ".join([f"{k}: {v}" for k, v in row.items()])
-                    for idx, ch in enumerate(chunk_text(text)):
-                        docs.append({"path": f"{fname}#row{row_i}", "chunk_id": idx, "text": ch})
+            if lower.endswith(".md"):
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        text = f.read()
+                except Exception:
+                    continue
+                for idx, ch in enumerate(chunk_text(text)):
+                    docs.append({"path": relpath, "chunk_id": idx, "text": ch})
+
+            elif include_csv and lower.endswith(".csv"):
+                try:
+                    with open(fpath, "r", encoding="utf-8", errors="ignore") as f:
+                        reader = csv.DictReader(f)
+                        # If CSV has no header, DictReader.fieldnames may be None; skip such files gracefully
+                        if not reader.fieldnames:
+                            continue
+                        for row_i, row in enumerate(reader):
+                            try:
+                                text = " | ".join([f"{k}: {v}" for k, v in row.items()])
+                            except Exception:
+                                # Fallback stringification
+                                text = str(row)
+                            for idx, ch in enumerate(chunk_text(text)):
+                                docs.append({"path": f"{relpath}#row{row_i}", "chunk_id": idx, "text": ch})
+                except Exception:
+                    continue
+
     return docs
 
 
@@ -179,13 +204,13 @@ def index_collection(collection_name: str, docs: List, force: bool = False, batc
     print("✅ Indexed Notion documents into Qdrant")
 
 
-def enrich_features(features: List, organization: str):
+def enrich_features(features: List):
     feature_list = []
-    feature_prompt = "You are a helpful assistant whos job is to find the most detailed information about concrete features and nothing else. The information you need to retrieve is: very detailed information about the feature AND a collection of tags which you think are keywords related to the feature. You need to search throughly in the documentation and return all of the possible information about the feature: {feature} with details: {details}. Do not invent information or return anything else other than the information about this concrete feature. If you don't find anything relevant in the docs, just return empty string. The format in which I want the information returned is plain text."
-    for i, (feature) in enumerate(features):
-        concrete_prompt = feature_prompt.format(feature["name"], feature["description"])
-        gelio_says = ask(concrete_prompt, organization)
-        feature_list.append({"text": gelio_says})
+    feature_prompt = "You are a helpful assistant whos job is to find very detailed information about concrete features and nothing else. The information you need to retrieve is: very detailed information about the feature AND a collection of tags which you think are keywords related to the feature. Return very long explination about this. I need a lot of details like what does the feature do, any APIs it has, DNS, tutorials and everything. You need to search throughly in the documentation and return all of the possible information about the feature: {feature} with details: {details}. Do not invent information or return anything else other than the information about this concrete feature. If you don't find anything relevant in the docs, just return empty string. The format in which I want the information returned is plain text."
+    for i,feature in enumerate(features):
+        concrete_prompt = feature_prompt.format(feature=feature.name, details= feature.description)
+        gelio_says = ask(concrete_prompt, COLLECTION)
+        feature_list.append({"text": gelio_says, "path": feature.name, "chunk_id":i})
     
     return feature_list
     
@@ -228,7 +253,8 @@ def ask(query: str, collection_name: str, want_json: bool = False) -> str:
             "You are a documentation extraction assistant. Use ONLY the provided context.\n"
             "When structured output is requested, you MUST return valid JSON that follows the requested schema.\n"
             "If some required fields are not present in the context, leave them as empty strings and still return JSON.\n"
-            "Do NOT invent facts that are not in the context."
+            "Do NOT invent facts that are not in the context.\n"
+            "DONT BEGIN THE LINE WITH: ```json "
         ),
     }
 
@@ -267,7 +293,7 @@ class IndexRequest(BaseModel):
     features: List[Feature]
 
 
-@app.post("/ask", response_model=JSONResponse)
+@app.post("/ask", response_model=QueryResponse)
 def ask_api(req: QueryRequest):
     return JSONResponse(content={"answer": ask(req.question, COLLECTION)})
 
@@ -277,15 +303,15 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/index/features", response_model=JSONResponse)
+@app.post("/index/features")
 def index(req: IndexRequest):
-    enreached_features = enrich_features(req.features, req.organization)
+    enreached_features = enrich_features(req.features)
     index_collection(req.organization.lower()+ "_features", enreached_features)
     return {"status": "ok"}
 
 
-@app.get("/ask/{organization}/feature", response_model=JSONResponse)
-def ask_api(organization: str, req: QueryRequest):
+@app.get("/ask/{organization}/feature", response_model=QueryResponse)
+def ask_feature(organization: str, req: QueryRequest):
     return JSONResponse(content={"answer": ask(req.question, organization.lower() + "_features")})
 
 

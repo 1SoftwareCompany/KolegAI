@@ -1,12 +1,13 @@
 venv
 Notion*
+docs*
 Export*
 .vscode
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
 *$py.class
-
+cleaned.jsonl
 # C extensions
 *.so
 
@@ -218,3 +219,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+.docs
