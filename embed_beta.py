@@ -62,7 +62,7 @@ SPARSE_MODEL = "Qdrant/bm25"
 SPARSE_DEVICE = os.getenv("SPARSE_DEVICE", "cuda:1")
 
 # Retrieval sizes (higher initial recall → better extractions)
-# Forward-looking default: small, clean final context
+# Forward-looking default: small, clean final context 
 TOP_K_INITIAL = int(os.getenv("TOP_K_INITIAL", "250"))
 TOP_K_FINAL = int(os.getenv("TOP_K_FINAL", "20"))
 
