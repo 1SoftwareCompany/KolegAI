@@ -267,9 +267,13 @@ class IndexRequest(BaseModel):
     features: List[Feature]
 
 
-@app.post("/ask", response_model=JSONResponse)
+class AnswerResponse(BaseModel):
+    answer: str
+
+
+@app.post("/ask", response_model=AnswerResponse)
 def ask_api(req: QueryRequest):
-    return JSONResponse(content={"answer": ask(req.question, COLLECTION)})
+    return {"answer": ask(req.question, COLLECTION)}
 
 
 @app.get("/health")
@@ -277,16 +281,16 @@ def health():
     return {"status": "ok"}
 
 
-@app.post("/index/features", response_model=JSONResponse)
+@app.post("/index/features", response_model=AnswerResponse)
 def index(req: IndexRequest):
     enreached_features = enrich_features(req.features, req.organization)
     index_collection(req.organization.lower()+ "_features", enreached_features)
     return {"status": "ok"}
 
 
-@app.get("/ask/{organization}/feature", response_model=JSONResponse)
+@app.get("/ask/{organization}/feature", response_model=AnswerResponse)
 def ask_api(organization: str, req: QueryRequest):
-    return JSONResponse(content={"answer": ask(req.question, organization.lower() + "_features")})
+    return {"answer": ask(req.question, organization.lower() + "_features")}
 
 
 # ======================
