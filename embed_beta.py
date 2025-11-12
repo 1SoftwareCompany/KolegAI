@@ -32,6 +32,7 @@ import requests
 from sentence_transformers import SentenceTransformer, CrossEncoder, SparseEncoder
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import VectorParams, Distance, PointIdsList, SparseVectorParams, models, PointStruct
+from qdrant_client.models import Distance, VectorParams, models, PointStruct
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
