@@ -189,6 +189,7 @@ def enrich_features(features: List, organization: str):
     
     return feature_list
     
+
 # ======================
 # Query / Serve
 # ======================
@@ -202,6 +203,7 @@ EXTRACTION_SCHEMA_HINT = (
     'and if no features are found, use an empty array []. '
     'Do not invent content. Do not add extra keys, text, code fences, or comments.'
 )
+
 
 def ask(query: str, collection_name: str, want_json: bool = False) -> str:
     """Dense retrieve → rerank → answer with LLM."""
@@ -271,6 +273,10 @@ class AnswerResponse(BaseModel):
     answer: str
 
 
+class FeatureResponse(BaseModel):
+    feature: str
+
+
 @app.post("/ask", response_model=AnswerResponse)
 def ask_api(req: QueryRequest):
     return {"answer": ask(req.question, COLLECTION)}
@@ -288,9 +294,11 @@ def index(req: IndexRequest):
     return {"status": "ok"}
 
 
-@app.get("/ask/{organization}/feature", response_model=AnswerResponse)
+@app.get("/ask/{organization}/feature", response_model=FeatureResponse)
 def ask_api(organization: str, req: QueryRequest):
-    return {"answer": ask(req.question, organization.lower() + "_features")}
+    return FeatureResult(
+        feature=ask(req.question, organization.lower() + "_features")
+    )
 
 
 # ======================
