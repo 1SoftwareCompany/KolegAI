@@ -296,7 +296,7 @@ def index(req: IndexRequest):
 
 @app.get("/ask/{organization}/feature", response_model=FeatureResponse)
 def ask_api(organization: str, req: QueryRequest):
-    return FeatureResult(
+    return FeatureResponse(
         feature=ask(req.question, organization.lower() + "_features")
     )
 
