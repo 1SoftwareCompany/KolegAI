@@ -183,7 +183,7 @@ def enrich_features(features: List, organization: str):
     feature_list = []
     feature_prompt = "You are a helpful assistant whos job is to find the most detailed information about concrete features and nothing else. The information you need to retrieve is: very detailed information about the feature AND a collection of tags which you think are keywords related to the feature. You need to search throughly in the documentation and return all of the possible information about the feature: {feature} with details: {details}. Do not invent information or return anything else other than the information about this concrete feature. If you don't find anything relevant in the docs, just return empty string. The format in which I want the information returned is plain text."
     for i, (feature) in enumerate(features):
-        concrete_prompt = feature_prompt.format(feature["name"], feature["description"])
+        concrete_prompt = feature_prompt.format(feature = feature.name, details = feature.description)
         gelio_says = ask(concrete_prompt, organization)
         feature_list.append({"text": gelio_says})
     
