@@ -188,7 +188,7 @@ def index_collection(collection_name: str, docs: List, force: bool = False, batc
         normalize_embeddings=True,
     )
 
-    bm25_embeddings = list(bm25_embedding_model.embed(doc for doc in docs))
+    bm25_embeddings = list(bm25_embedding_model.embed(doc["text"] for doc in docs))
 
      # Recreate guarantees correct vector size
     client.recreate_collection(
