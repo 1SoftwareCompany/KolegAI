@@ -35,12 +35,13 @@ from qdrant_client.http.models import VectorParams, Distance, PointIdsList, Spar
 from qdrant_client.models import Distance, VectorParams, models, PointStruct
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastembed import TextEmbedding, LateInteractionTextEmbedding, SparseTextEmbedding 
 
 
 # ======================
 # Config
 # ======================
-COLLECTION = "notion_docs_unicom_test_hybrid_search"
+COLLECTION = "notion_docs_unicom_test_hybrid_search_i_hope_it_works"
 NOTION_EXPORT_DIR = "Notion-Export"
 
 
@@ -79,7 +80,9 @@ client = QdrantClient(url=QDRANT_URL, prefer_grpc=False)
 # Instantiate models once; cheap for "serve", heavy for "index" only on encode()
 embedder = SentenceTransformer(EMBED_MODEL, device=EMBED_DEVICE)
 reranker = CrossEncoder(RERANK_MODEL, device=RERANK_DEVICE)
-bm25_embedding_model = SparseEncoder(SPARSE_MODEL, device=SPARSE_DEVICE)
+
+bm25_embedding_model = SparseTextEmbedding("Qdrant/bm25", device=SPARSE_DEVICE)
+# bm25_embedding_model = SparseEncoder(SPARSE_MODEL, device=SPARSE_DEVICE)
 
 # ======================
 # Utilities
@@ -232,7 +235,7 @@ def index_collection(force: bool = False, batch_size: int = 256, include_csv: bo
         normalize_embeddings=True,
     )
 
-    bm25_embeddings = list(bm25_embedding_model.encode(doc for doc in docs))
+    bm25_embeddings = list(bm25_embedding_model.embed(doc for doc in docs))
 
     # Recreate guarantees correct vector size
     client.recreate_collection(
@@ -290,7 +293,7 @@ def ask(query: str, want_json: bool = False) -> str:
     # think about prefetch maybe?
     
     dense_vectors = next(embedder.encode([query], normalize_embeddings=True)) #[0]
-    sparse_vectors = next(bm25_embedding_model.encode([query], normalize_embeddings=True))
+    sparse_vectors = next(bm25_embedding_model.query_embed(query))
 
     # Initial recall from Qdrant
     # initial = client.query_points(
@@ -303,13 +306,13 @@ def ask(query: str, want_json: bool = False) -> str:
     collection_name=COLLECTION,
     prefetch=[
         models.Prefetch(
-            using="sparse",  # your sparse vector name
-            query=models.SparseVector(**sparse_vectors.as_object()),  # indices+values
-            limit=TOP_K_INITIAL,  # prefetch pool size
+            using="sparse",
+            query=models.SparseVector(**sparse_vectors.as_object()),
+            limit=TOP_K_INITIAL,
         ),
         models.Prefetch(
-            using="dense",     # your dense vector name
-            query=dense_vectors,            # list[float]
+            using="dense",
+            query=dense_vectors,
             limit=TOP_K_INITIAL,
         ),
     ],
