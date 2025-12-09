@@ -251,7 +251,7 @@ EXTRACTION_SCHEMA_HINT = (
 def ask(query: str, collection_name: str, want_json: bool = False) -> str:
     """Dense retrieve → rerank → answer with LLM."""
     # Encode query on GPU 1
-    dense_vectors = next(embedder.encode([query], normalize_embeddings=True)) #[0]
+    dense_vectors = embedder.encode([query], normalize_embeddings=True)[0]
     sparse_vectors = next(bm25_embedding_model.query_embed(query))
 
    

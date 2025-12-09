@@ -292,7 +292,7 @@ def ask(query: str, want_json: bool = False) -> str:
 
     # think about prefetch maybe?
     
-    dense_vectors = next(embedder.encode([query], normalize_embeddings=True)) #[0]
+    dense_vectors = embedder.encode([query], normalize_embeddings=True)[0]
     sparse_vectors = next(bm25_embedding_model.query_embed(query))
 
     # Initial recall from Qdrant
