@@ -11,4 +11,4 @@ transformers
 uvicorn
 sentence_transformers
 qdrant_client
-fastapi
+fastembed

@@ -22,16 +22,18 @@ import uvicorn
 import requests
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import VectorParams, Distance
+from qdrant_client.http.models import VectorParams, Distance, SparseVectorParams, models, PointStruct
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from fastembed import TextEmbedding, LateInteractionTextEmbedding, SparseTextEmbedding 
 
 
 # ======================
 # Config
 # ======================
-COLLECTION = "notion_docs"
-NOTION_EXPORT_DIR = "Notion-Export"
+COLLECTION = "notion_docs_unicom_test_hybrid_search_i_hope_it_works"
+NOTION_EXPORT_DIR = "Notion-Export-Unicom-Only" # is this the one?
 
 # Qdrant (HTTP default). If you use gRPC, set prefer_grpc=True below.
 QDRANT_URL = "http://localhost:6333"
@@ -46,6 +48,9 @@ RERANK_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 EMBED_DEVICE = "cuda:1"
 RERANK_DEVICE = "cuda:1"
 
+SPARSE_MODEL = "Qdrant/bm25"
+SPARSE_DEVICE = os.getenv("SPARSE_DEVICE", "cuda:1")
+
 # Retrieval sizes (higher initial recall → better extractions)
 TOP_K_INITIAL = 250
 TOP_K_FINAL = 20
@@ -58,6 +63,8 @@ client = QdrantClient(url=QDRANT_URL, prefer_grpc=False)
 # Instantiate models once; cheap for "serve", heavy for "index" only on encode()
 embedder = SentenceTransformer(EMBED_MODEL, device=EMBED_DEVICE)
 reranker = CrossEncoder(RERANK_MODEL, device=RERANK_DEVICE)
+
+bm25_embedding_model = SparseTextEmbedding("Qdrant/bm25", device=SPARSE_DEVICE)
 
 # ======================
 # Utilities
@@ -151,23 +158,38 @@ def index_collection(collection_name: str, docs: List, force: bool = False, batc
 
     print(f"Loaded {len(docs)} chunks from Notion export")
 
-    embeddings = embedder.encode(
+    dense_embeddings = embedder.encode(
         [d["text"] for d in docs],
         batch_size=batch_size,
         show_progress_bar=True,
         normalize_embeddings=True,
     )
 
-    # Recreate guarantees correct vector size
+    bm25_embeddings = list(bm25_embedding_model.embed(doc["text"] for doc in docs))
+
+     # Recreate guarantees correct vector size
     client.recreate_collection(
-        collection_name=collection_name,
-        vectors_config=VectorParams(size=embeddings.shape[1], distance=Distance.COSINE),
+        collection_name=COLLECTION,
+        vectors_config={
+        "dense": VectorParams(size=dense_embeddings.shape[1], distance=Distance.COSINE),
+        },
+        sparse_vectors_config={
+        "sparse":SparseVectorParams(modifier=models.Modifier.IDF)
+        }
     )
 
     points = []
-    for i, (doc, emb) in enumerate(zip(docs, embeddings)):
+    for i, (doc, dense_emb, bm25_emb) in enumerate(zip(docs, dense_embeddings, bm25_embeddings)):
         payload = {"text": doc["text"], "path": doc["path"], "chunk_id": doc["chunk_id"]}
-        points.append({"id": i, "vector": emb.tolist(), "payload": payload})
+        point = PointStruct(
+            id=i,
+            payload=payload,
+            vector={
+                "sparse": bm25_emb.as_object(),
+                "dense": dense_emb
+            }
+        )
+        points.append(point)
 
     # Upsert in batches
     BATCH_SIZE = 1000
@@ -208,11 +230,27 @@ EXTRACTION_SCHEMA_HINT = (
 def ask(query: str, collection_name: str, want_json: bool = False) -> str:
     """Dense retrieve → rerank → answer with LLM."""
     # Encode query on GPU 1
-    q_emb = embedder.encode([query], normalize_embeddings=True)[0]
+    dense_vectors = embedder.encode([query], normalize_embeddings=True)[0]
+    sparse_vectors = next(bm25_embedding_model.query_embed(query))
+
+   
     initial = client.query_points(
-        collection_name=collection_name,
-        query=q_emb.tolist(),
-        limit=TOP_K_INITIAL
+    collection_name=COLLECTION,
+    prefetch=[
+        models.Prefetch(
+            using="sparse",
+            query=models.SparseVector(**sparse_vectors.as_object()),
+            limit=TOP_K_INITIAL,
+        ),
+        models.Prefetch(
+            using="dense",
+            query=dense_vectors,
+            limit=TOP_K_INITIAL,
+        ),
+    ],
+    # Tell Qdrant to fuse the two prefetch result sets (RRF or DBSF)
+    query=models.FusionQuery(fusion=models.Fusion.RRF),
+    limit=TOP_K_INITIAL
     ).points
 
     # Rerank on GPU 1
