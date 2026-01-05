@@ -12,3 +12,4 @@ uvicorn
 sentence_transformers
 qdrant_client
 fastembed
+jwt

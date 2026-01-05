@@ -23,10 +23,11 @@ import requests
 from sentence_transformers import SentenceTransformer, CrossEncoder
 from qdrant_client import QdrantClient
 from qdrant_client.http.models import VectorParams, Distance, SparseVectorParams, models, PointStruct
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from fastembed import TextEmbedding, LateInteractionTextEmbedding, SparseTextEmbedding 
+from fastembed import TextEmbedding, LateInteractionTextEmbedding, SparseTextEmbedding
+from security import JwtConfig, JwtVerifier
 
 
 # ======================
@@ -287,7 +288,18 @@ def ask(query: str, collection_name: str, want_json: bool = False) -> str:
 # ======================
 # API
 # ======================
+
 app = FastAPI(title="RAG API")
+
+cfg = JwtConfig(
+    issuer="https://keycloak.1software.org/realms/1manager",
+    audience="1manager_kolegai",
+    jwks_uri="https://keycloak.1software.org/realms/1manager/protocol/openid-connect/certs"
+)
+verify_jwt = JwtVerifier(cfg)
+
+router = APIRouter(dependencies=[Depends(verify_jwt)])
+app.include_router(router)
 
 class QueryRequest(BaseModel):
     question: str
@@ -315,24 +327,24 @@ class FeatureResponse(BaseModel):
     feature: str
 
 
-@app.post("/ask", response_model=AnswerResponse)
+@router.post("/ask", response_model=AnswerResponse)
 def ask_api(req: QueryRequest):
     return {"answer": ask(req.question, COLLECTION)}
 
 
-@app.get("/health")
+@router.get("/health")
 def health():
     return {"status": "ok"}
 
 
-@app.post("/index/features", response_model=AnswerResponse)
+@router.post("/index/features", response_model=AnswerResponse)
 def index(req: IndexRequest):
     enreached_features = enrich_features(req.features, req.organization)
     index_collection(req.organization.lower()+ "_features", enreached_features)
     return {"status": "ok"}
 
 
-@app.get("/ask/{organization}/feature", response_model=FeatureResponse)
+@router.get("/ask/{organization}/feature", response_model=FeatureResponse)
 def ask_api(organization: str, req: QueryRequest):
     return FeatureResponse(
         feature=ask(req.question, organization.lower() + "_features")
