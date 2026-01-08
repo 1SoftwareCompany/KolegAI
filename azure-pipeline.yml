@@ -1,0 +1,106 @@
+trigger:
+  branches:
+    include:
+      - master
+      - preview
+
+pr: none
+
+stages:
+- stage: Build
+  displayName: Build
+  jobs:
+  - job: Build
+    displayName: Build Job
+    pool:
+      vmImage: 'ubuntu-22.04'
+
+    variables:
+      LANG: en_US.UTF-8
+
+    steps:
+    - checkout: self
+      clean: true
+      persistCredentials: true
+
+    - task: UsePythonVersion@0
+      displayName: "Use Python 3.12"
+      inputs:
+        versionSpec: "3.12"
+
+    - task: Bash@3
+      displayName: "Install Python deps (optional)"
+      inputs:
+        targetType: inline
+        script: |
+          set -e
+          python -V
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          # if you have tests:
+          # pytest -q
+
+    - task: NodeTool@0
+      displayName: "Use Node 20"
+      inputs:
+        versionSpec: "20.x"
+
+    - task: Bash@3
+      name: Release
+      displayName: "semantic-release (and Docker push)"
+      env:
+        LOCAL_PATH: $(Build.Repository.LocalPath)
+        DOCKER_HUB_USER: $(DOCKER_HUB_USER)
+        DOCKER_HUB_PASSWORD: $(DOCKER_HUB_PASSWORD)
+      inputs:
+        targetType: 'inline'
+        script: |
+          set -e
+
+          npm install -g semantic-release@22.0.12 \
+            @semantic-release/exec@latest \
+            @semantic-release/changelog@latest \
+            @semantic-release/git@latest
+
+          RELEASE_OUTPUT=$(npx semantic-release)
+          echo "$RELEASE_OUTPUT"
+
+          if [[ "$RELEASE_OUTPUT" == *"Published release"* ]] || [[ "$RELEASE_OUTPUT" == *"Published"* ]]; then
+            echo "##vso[task.setvariable variable=Released;isOutput=true]true"
+          else
+            echo "##vso[task.setvariable variable=Released;isOutput=true]false"
+          fi
+
+- task: Bash@3
+  displayName: Pull image and restart kolegai-api
+  env:
+    DOCKER_HUB_PASSWORD: $(DOCKER_HUB_PASSWORD)
+  inputs:
+    targetType: 'inline'
+    script: |
+      set -e
+
+      IMAGE_NAME="1softwareorg/koleg.ai"
+      IMAGE_TAG="$(Build.BuildNumber)"
+      CONTAINER_NAME="kolegai-api"
+
+      echo "Pulling ${IMAGE_NAME}:${IMAGE_TAG}"
+      docker pull "${IMAGE_NAME}:${IMAGE_TAG}"
+
+      if [ "$(docker ps -aq -f name=${CONTAINER_NAME})" ]; then
+        echo "Removing existing container ${CONTAINER_NAME}"
+        docker rm -f "${CONTAINER_NAME}"
+      fi
+
+      echo "Starting ${CONTAINER_NAME}"
+      docker run -d \
+        --name "${CONTAINER_NAME}" \
+        --gpus all \
+        --network host \
+        -e EMBED_DEVICE=cuda \
+        -e RERANK_DEVICE=cuda \
+        "${IMAGE_NAME}:${IMAGE_TAG}"
+
+      echo "Deployment complete"
