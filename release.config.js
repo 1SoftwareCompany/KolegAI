@@ -18,7 +18,7 @@ module.exports = {
 
         docker login -u "$DOCKER_HUB_USER" -p "$DOCKER_HUB_PASSWORD"
 
-        docker build -f ci/Dockerfile \
+        docker build -f Dockerfile \
           -t "$DOCKER_HUB_USER/koleg.ai:$VER" \
           "$LOCAL_PATH"
 
