@@ -355,7 +355,6 @@ def purge_noise(batch: int = 1000) -> int:
 # API
 # ======================
 
-app = FastAPI(title="RAG API")
 
 cfg = JwtConfig(
     issuer="https://keycloak.1software.org/realms/1manager",
@@ -364,9 +363,6 @@ cfg = JwtConfig(
 )
 verify_jwt = JwtVerifier(cfg)
 
-router = APIRouter(dependencies=[Depends(verify_jwt)])
-app.include_router(router)
-
 
 class QueryRequest(BaseModel):
     question: str
@@ -374,6 +370,8 @@ class QueryRequest(BaseModel):
 
 class QueryResponse(BaseModel):
     answer: str
+
+router = APIRouter(dependencies=[Depends(verify_jwt)])
 
 
 @router.post("/ask")
@@ -385,6 +383,9 @@ def ask_api(req: QueryRequest):
 def health():
     return {"status": "ok"}
 
+
+app = FastAPI(title="RAG API")
+app.include_router(router)
 
 # ======================
 # Entrypoint

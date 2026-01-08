@@ -298,10 +298,6 @@ cfg = JwtConfig(
 )
 verify_jwt = JwtVerifier(cfg)
 
-router = APIRouter(dependencies=[Depends(verify_jwt)])
-
-app.add_api_route
-app.include_router(router)
 
 class QueryRequest(BaseModel):
     question: str
@@ -329,6 +325,9 @@ class FeatureResponse(BaseModel):
     feature: str
 
 
+router = APIRouter(dependencies=[Depends(verify_jwt)])
+
+
 @router.post("/ask", response_model=AnswerResponse)
 def ask_api(req: QueryRequest):
     return {"answer": ask(req.question, COLLECTION)}
@@ -352,6 +351,9 @@ def ask_api(organization: str, req: QueryRequest):
         feature=ask(req.question, organization.lower() + "_features")
     )
 
+
+app = FastAPI(title="test API")
+app.include_router(router)
 
 # ======================
 # Entrypoint
