@@ -352,7 +352,6 @@ def ask_api(organization: str, req: QueryRequest):
     )
 
 
-app = FastAPI(title="test API")
 app.include_router(router)
 
 # ======================
