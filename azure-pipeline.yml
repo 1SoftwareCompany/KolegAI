@@ -72,7 +72,21 @@ stages:
           else
             echo "##vso[task.setvariable variable=Released;isOutput=true]false"
           fi
+- stage: Deploy
+  displayName: Deploy to Kolegai
+  dependsOn: Build
+  condition: and(
+    succeeded(),
+    eq(dependencies.Build.outputs['Build.Release.Released'], 'true')
+  )
 
+  jobs:
+  - job: DeployToKolegai
+    displayName: Restart python service container
+    pool:
+      name: 'ProxMox Self-hosted'
+    demands:
+      - Agent.Name -equals kolegai
 - task: Bash@3
   displayName: Pull image and restart kolegai-api
   env:
