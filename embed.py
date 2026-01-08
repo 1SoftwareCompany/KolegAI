@@ -299,6 +299,8 @@ cfg = JwtConfig(
 verify_jwt = JwtVerifier(cfg)
 
 router = APIRouter(dependencies=[Depends(verify_jwt)])
+
+app.add_api_route
 app.include_router(router)
 
 class QueryRequest(BaseModel):
