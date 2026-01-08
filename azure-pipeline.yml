@@ -28,23 +28,7 @@ stages:
             inputs:
               versionSpec: "3.12"
 
-          - task: Bash@3
-            displayName: "Install Python deps (optional)"
-            inputs:
-              targetType: "inline"
-              script: |
-                set -e
-                python -V
-                python -m pip install --upgrade pip
-                if [ -f requirements.txt ]; then
-                  pip install -r requirements.txt
-                fi
-                # pytest -q
 
-          - task: NodeTool@0
-            displayName: "Use Node 20"
-            inputs:
-              versionSpec: "20.x"
 
           - task: Bash@3
             name: Release
