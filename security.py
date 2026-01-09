@@ -70,9 +70,9 @@ class JwtVerifier:
         except InvalidIssuerError:
             logger.logger.error("Invalid issuer")
             raise unauthorized()
-        except (PyJWKClientError, InvalidTokenError):
-            logger.logger.error("Invalid token")
+        except (PyJWKClientError, InvalidTokenError) as e:
+            logger.logger.exception("Invalid token while validating JWT: %s", e)
             raise unauthorized()
-        except Exception:
-            logger.logger.error("Invalid token")
+        except Exception as e:
+            logger.logger.exception("Invalid token while validating JWT: %s", e)
             raise unauthorized()

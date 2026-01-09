@@ -327,10 +327,28 @@ class FeatureResponse(BaseModel):
 
 router = APIRouter(dependencies=[Depends(verify_jwt)])
 
+@router.post("/ask", response_model=AnswerResponse)
+def ask_api(req: QueryRequest):
+    return {"answer": ask(req.question, COLLECTION)}
+
 
 @router.get("/health")
 def health():
     return {"status": "ok"}
+
+
+@router.post("/index/features", response_model=AnswerResponse)
+def index(req: IndexRequest):
+    enreached_features = enrich_features(req.features, req.organization)
+    index_collection(req.organization.lower()+ "_features", enreached_features)
+    return {"status": "ok"}
+
+
+@router.get("/ask/{organization}/feature", response_model=FeatureResponse)
+def ask_api(organization: str, req: QueryRequest):
+    return FeatureResponse(
+        feature=ask(req.question, organization.lower() + "_features")
+    )
 
 
 app.include_router(router)
