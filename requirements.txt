@@ -13,3 +13,4 @@ sentence_transformers
 qdrant_client
 fastembed
 pyjwt
+cryptography
