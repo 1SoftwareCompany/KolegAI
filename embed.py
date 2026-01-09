@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from fastembed import TextEmbedding, LateInteractionTextEmbedding, SparseTextEmbedding
 from security import JwtConfig, JwtVerifier
-
+from log import get_logger
 
 # ======================
 # Config
@@ -67,6 +67,7 @@ reranker = CrossEncoder(RERANK_MODEL, device=RERANK_DEVICE)
 
 bm25_embedding_model = SparseTextEmbedding("Qdrant/bm25", device=SPARSE_DEVICE)
 
+logger = get_logger(__name__)
 # ======================
 # Utilities
 # ======================
@@ -117,7 +118,8 @@ def collection_ready(name: str) -> bool:
         client.get_collection(name)
         count = client.count(name, exact=True).count
         return count > 0
-    except Exception:
+    except Exception as ex:
+        logger.error("Something went wrong while getting collection from qdrant")
         return False
 
 

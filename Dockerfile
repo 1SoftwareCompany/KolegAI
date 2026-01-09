@@ -20,6 +20,7 @@ RUN python3 -m pip install --no-cache-dir --upgrade pip && \
 # App code
 COPY embed.py .
 COPY security.py .
+COPY log.py .
 
 # Default envs – override at runtime if needed
 ENV QDRANT_URL=http://localhost:6333 \
